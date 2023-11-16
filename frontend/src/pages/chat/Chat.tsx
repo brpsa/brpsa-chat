@@ -579,8 +579,8 @@ const Chat = () => {
                                     className={styles.chatIcon}
                                     aria-hidden="true"
                                 />
-                                <h1 className={styles.chatEmptyStateTitle}>Knowledge Base</h1>
-                                <h2 className={styles.chatEmptyStateSubtitle}>Chat with documents available in BRP's Knowledge Base</h2>
+                                <h1 className={styles.chatEmptyStateTitle}>Country Manuals</h1>
+                                <h2 className={styles.chatEmptyStateSubtitle}>Chat with your BRP's Country Manuals</h2>
                             </Stack>
                         ) : (
                             <div className={styles.chatMessageStream} style={{ marginBottom: isLoading ? "40px" : "0px"}} role="log">
