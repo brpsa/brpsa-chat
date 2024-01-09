@@ -41,6 +41,7 @@ const enum messageStatus {
 
 const Chat = () => {
     const appStateContext = useContext(AppStateContext)
+    const AUTH_ENABLED = appStateContext?.state.frontendSettings?.auth_enabled === "true" ;
     const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [showLoadingMessage, setShowLoadingMessage] = useState<boolean>(false);
@@ -93,6 +94,10 @@ const Chat = () => {
     }, [appStateContext?.state.chatHistoryLoadingState])
 
     const getUserInfoList = async () => {
+        if (!AUTH_ENABLED) {
+            setShowAuthMessage(false);
+            return;
+        }
         const userInfoList = await getUserInfo();
         if (userInfoList.length === 0 && window.location.hostname !== "127.0.0.1") {
             setShowAuthMessage(true);
@@ -341,7 +346,9 @@ const Chat = () => {
                         abortFuncs.current = abortFuncs.current.filter(a => a !== abortController);
                         return;
                     }
-                    resultConversation.messages.push(toolMessage, assistantMessage)
+                    isEmpty(toolMessage) ?
+                        resultConversation.messages.push(assistantMessage) :
+                        resultConversation.messages.push(toolMessage, assistantMessage)
                 }else{
                     resultConversation = {
                         id: result.history_metadata.conversation_id,
@@ -349,7 +356,9 @@ const Chat = () => {
                         messages: [userMessage],
                         date: result.history_metadata.date
                     }
-                    resultConversation.messages.push(toolMessage, assistantMessage)
+                    isEmpty(toolMessage) ?
+                        resultConversation.messages.push(assistantMessage) :
+                        resultConversation.messages.push(toolMessage, assistantMessage)
                 }
                 if(!resultConversation){
                     setIsLoading(false);
@@ -358,7 +367,9 @@ const Chat = () => {
                     return;
                 }
                 appStateContext?.dispatch({ type: 'UPDATE_CURRENT_CHAT', payload: resultConversation });
-                setMessages([...messages, toolMessage, assistantMessage]);
+                isEmpty(toolMessage) ?
+                    setMessages([...messages, assistantMessage]) :
+                    setMessages([...messages, toolMessage, assistantMessage]);     
             }
             
         } catch ( e )  {
@@ -519,8 +530,8 @@ const Chat = () => {
     }, [processMessages]);
 
     useEffect(() => {
-        getUserInfoList();
-    }, []);
+        if (AUTH_ENABLED !== undefined) getUserInfoList();
+    }, [AUTH_ENABLED]);
 
     useLayoutEffect(() => {
         chatMessageStreamEnd.current?.scrollIntoView({ behavior: "smooth" })
@@ -648,12 +659,15 @@ const Chat = () => {
                                         icon: { 
                                             color: '#FFFFFF',
                                         },
+                                        iconDisabled: {
+                                            color: "#BDBDBD !important"
+                                        },
                                         root: {
                                             color: '#FFFFFF',
                                             background: "radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)"
                                         },
                                         rootDisabled: {
-                                            background: "#BDBDBD"
+                                            background: "#F0F0F0"
                                         }
                                     }}
                                     className={styles.newChatIcon}
@@ -668,11 +682,16 @@ const Chat = () => {
                                         icon: { 
                                             color: '#FFFFFF',
                                         },
+                                        iconDisabled: {
+                                            color: "#BDBDBD !important" ,
+                                        },
                                         root: {
                                             color: '#FFFFFF',
-                                            background: disabledButton() ? "#BDBDBD" : "radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)",
-                                            cursor: disabledButton() ? "" : "pointer"
+                                            background: "radial-gradient(109.81% 107.82% at 100.1% 90.19%, #0F6CBD 33.63%, #2D87C3 70.31%, #8DDDD8 100%)",
                                         },
+                                        rootDisabled: {
+                                            background: "#F0F0F0"
+                                        }
                                     }}
                                     className={appStateContext?.state.isCosmosDBAvailable?.status !== CosmosDBStatus.NotConfigured ? styles.clearChatBroom : styles.clearChatBroomNoCosmos}
                                     iconProps={{ iconName: 'Broom' }}

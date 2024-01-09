@@ -5,6 +5,7 @@ import requests
 import openai
 import copy
 from azure.identity import DefaultAzureCredential
+from base64 import b64encode
 from flask import Flask, Response, request, jsonify, send_from_directory
 from dotenv import load_dotenv
 
@@ -97,6 +98,26 @@ AZURE_COSMOSDB_ACCOUNT = os.environ.get("AZURE_COSMOSDB_ACCOUNT")
 AZURE_COSMOSDB_CONVERSATIONS_CONTAINER = os.environ.get("AZURE_COSMOSDB_CONVERSATIONS_CONTAINER")
 AZURE_COSMOSDB_ACCOUNT_KEY = os.environ.get("AZURE_COSMOSDB_ACCOUNT_KEY")
 
+# Elasticsearch Integration Settings
+ELASTICSEARCH_ENDPOINT = os.environ.get("ELASTICSEARCH_ENDPOINT")
+ELASTICSEARCH_ENCODED_API_KEY = os.environ.get("ELASTICSEARCH_ENCODED_API_KEY")
+ELASTICSEARCH_INDEX = os.environ.get("ELASTICSEARCH_INDEX")
+ELASTICSEARCH_QUERY_TYPE = os.environ.get("ELASTICSEARCH_QUERY_TYPE", "simple")
+ELASTICSEARCH_TOP_K = os.environ.get("ELASTICSEARCH_TOP_K", SEARCH_TOP_K)
+ELASTICSEARCH_ENABLE_IN_DOMAIN = os.environ.get("ELASTICSEARCH_ENABLE_IN_DOMAIN", SEARCH_ENABLE_IN_DOMAIN)
+ELASTICSEARCH_CONTENT_COLUMNS = os.environ.get("ELASTICSEARCH_CONTENT_COLUMNS")
+ELASTICSEARCH_FILENAME_COLUMN = os.environ.get("ELASTICSEARCH_FILENAME_COLUMN")
+ELASTICSEARCH_TITLE_COLUMN = os.environ.get("ELASTICSEARCH_TITLE_COLUMN")
+ELASTICSEARCH_URL_COLUMN = os.environ.get("ELASTICSEARCH_URL_COLUMN")
+ELASTICSEARCH_VECTOR_COLUMNS = os.environ.get("ELASTICSEARCH_VECTOR_COLUMNS")
+ELASTICSEARCH_STRICTNESS = os.environ.get("ELASTICSEARCH_STRICTNESS", SEARCH_STRICTNESS)
+ELASTICSEARCH_EMBEDDING_MODEL_ID = os.environ.get("ELASTICSEARCH_EMBEDDING_MODEL_ID")
+
+# Frontend Settings via Environment Variables
+AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "true").lower()
+frontend_settings = { "auth_enabled": AUTH_ENABLED }
+
+
 # Initialize a CosmosDB client with AAD auth and containers for Chat History
 cosmos_conversation_client = None
 if AZURE_COSMOSDB_DATABASE and AZURE_COSMOSDB_ACCOUNT and AZURE_COSMOSDB_CONVERSATIONS_CONTAINER:
@@ -140,6 +161,12 @@ def should_use_data():
 
 def format_as_ndjson(obj: dict) -> str:
     return json.dumps(obj, ensure_ascii=False) + "\n"
+
+def parse_multi_columns(columns: str) -> list:
+    if "|" in columns:
+        return columns.split("|")
+    else:
+        return columns.split(",")
 
 def fetchUserGroups(userToken, nextLink=None):
     # Recursively fetch group membership
@@ -223,11 +250,11 @@ def prepare_body_headers_with_data(request):
                     "key": AZURE_SEARCH_KEY,
                     "indexName": AZURE_SEARCH_INDEX,
                     "fieldsMapping": {
-                        "contentFields": AZURE_SEARCH_CONTENT_COLUMNS.split("|") if AZURE_SEARCH_CONTENT_COLUMNS else [],
+                        "contentFields": parse_multi_columns(AZURE_SEARCH_CONTENT_COLUMNS) if AZURE_SEARCH_CONTENT_COLUMNS else [],
                         "titleField": AZURE_SEARCH_TITLE_COLUMN if AZURE_SEARCH_TITLE_COLUMN else None,
                         "urlField": AZURE_SEARCH_URL_COLUMN if AZURE_SEARCH_URL_COLUMN else None,
                         "filepathField": AZURE_SEARCH_FILENAME_COLUMN if AZURE_SEARCH_FILENAME_COLUMN else None,
-                        "vectorFields": AZURE_SEARCH_VECTOR_COLUMNS.split("|") if AZURE_SEARCH_VECTOR_COLUMNS else []
+                        "vectorFields": parse_multi_columns(AZURE_SEARCH_VECTOR_COLUMNS) if AZURE_SEARCH_VECTOR_COLUMNS else []
                     },
                     "inScope": True if AZURE_SEARCH_ENABLE_IN_DOMAIN.lower() == "true" else False,
                     "topNDocuments": AZURE_SEARCH_TOP_K,
@@ -251,11 +278,11 @@ def prepare_body_headers_with_data(request):
                     "databaseName": AZURE_COSMOSDB_MONGO_VCORE_DATABASE,
                     "containerName": AZURE_COSMOSDB_MONGO_VCORE_CONTAINER,                    
                     "fieldsMapping": {
-                        "contentFields": AZURE_COSMOSDB_MONGO_VCORE_CONTENT_COLUMNS.split("|") if AZURE_COSMOSDB_MONGO_VCORE_CONTENT_COLUMNS else [],
+                        "contentFields": parse_multi_columns(AZURE_COSMOSDB_MONGO_VCORE_CONTENT_COLUMNS) if AZURE_COSMOSDB_MONGO_VCORE_CONTENT_COLUMNS else [],
                         "titleField": AZURE_COSMOSDB_MONGO_VCORE_TITLE_COLUMN if AZURE_COSMOSDB_MONGO_VCORE_TITLE_COLUMN else None,
                         "urlField": AZURE_COSMOSDB_MONGO_VCORE_URL_COLUMN if AZURE_COSMOSDB_MONGO_VCORE_URL_COLUMN else None,
                         "filepathField": AZURE_COSMOSDB_MONGO_VCORE_FILENAME_COLUMN if AZURE_COSMOSDB_MONGO_VCORE_FILENAME_COLUMN else None,
-                        "vectorFields": AZURE_COSMOSDB_MONGO_VCORE_VECTOR_COLUMNS.split("|") if AZURE_COSMOSDB_MONGO_VCORE_VECTOR_COLUMNS else []
+                        "vectorFields": parse_multi_columns(AZURE_COSMOSDB_MONGO_VCORE_VECTOR_COLUMNS) if AZURE_COSMOSDB_MONGO_VCORE_VECTOR_COLUMNS else []
                     },
                     "inScope": True if AZURE_COSMOSDB_MONGO_VCORE_ENABLE_IN_DOMAIN.lower() == "true" else False,
                     "topNDocuments": AZURE_COSMOSDB_MONGO_VCORE_TOP_K,
@@ -263,7 +290,45 @@ def prepare_body_headers_with_data(request):
                     "queryType": query_type,
                     "roleInformation": AZURE_OPENAI_SYSTEM_MESSAGE
                 }
-            })
+            }
+        )
+
+    elif DATASOURCE_TYPE == "Elasticsearch":
+        body["dataSources"].append(
+            {
+                "messages": request_messages,
+                "temperature": float(AZURE_OPENAI_TEMPERATURE),
+                "max_tokens": int(AZURE_OPENAI_MAX_TOKENS),
+                "top_p": float(AZURE_OPENAI_TOP_P),
+                "stop": AZURE_OPENAI_STOP_SEQUENCE.split("|") if AZURE_OPENAI_STOP_SEQUENCE else None,
+                "stream": SHOULD_STREAM,
+                "dataSources": [
+                    {
+                        "type": "AzureCognitiveSearch",
+                        "parameters": {
+                            "endpoint": ELASTICSEARCH_ENDPOINT,
+                            "encodedApiKey": ELASTICSEARCH_ENCODED_API_KEY,
+                            "indexName": ELASTICSEARCH_INDEX,
+                            "fieldsMapping": {
+                                "contentFields": parse_multi_columns(ELASTICSEARCH_CONTENT_COLUMNS) if ELASTICSEARCH_CONTENT_COLUMNS else [],
+                                "titleField": ELASTICSEARCH_TITLE_COLUMN if ELASTICSEARCH_TITLE_COLUMN else None,
+                                "urlField": ELASTICSEARCH_URL_COLUMN if ELASTICSEARCH_URL_COLUMN else None,
+                                "filepathField": ELASTICSEARCH_FILENAME_COLUMN if ELASTICSEARCH_FILENAME_COLUMN else None,
+                                "vectorFields": parse_multi_columns(ELASTICSEARCH_VECTOR_COLUMNS) if ELASTICSEARCH_VECTOR_COLUMNS else []
+                            },
+                            "inScope": True if ELASTICSEARCH_ENABLE_IN_DOMAIN.lower() == "true" else False,
+                            "topNDocuments": int(ELASTICSEARCH_TOP_K),
+                            "queryType": ELASTICSEARCH_QUERY_TYPE,
+                            "roleInformation": AZURE_OPENAI_SYSTEM_MESSAGE,
+                            "embeddingEndpoint": AZURE_OPENAI_EMBEDDING_ENDPOINT,
+                            "embeddingKey": AZURE_OPENAI_EMBEDDING_KEY,
+                            "embeddingModelId": ELASTICSEARCH_EMBEDDING_MODEL_ID,
+                            "strictness": int(ELASTICSEARCH_STRICTNESS)
+                        }
+                    }
+                ]
+            }
+        )
     else:
         raise Exception(f"DATASOURCE_TYPE is not configured or unknown: {DATASOURCE_TYPE}")
 
@@ -606,7 +671,7 @@ def update_conversation():
         ## then write it to the conversation history in cosmos
         messages = request.json["messages"]
         if len(messages) > 0 and messages[-1]['role'] == "assistant":
-            if len(messages) > 1 and messages[-2] != {} and messages[-2]['role'] == "tool":
+            if len(messages) > 1 and messages[-2].get('role', None) == "tool":
                 # write the tool message first
                 cosmos_conversation_client.create_message(
                     conversation_id=conversation_id,
@@ -655,11 +720,12 @@ def delete_conversation():
 
 @app.route("/history/list", methods=["GET"])
 def list_conversations():
+    offset = request.args.get("offset", 0)
     authenticated_user = get_authenticated_user_details(request_headers=request.headers)
     user_id = authenticated_user['user_principal_id']
 
     ## get the conversations from cosmos
-    conversations = cosmos_conversation_client.get_conversations(user_id)
+    conversations = cosmos_conversation_client.get_conversations(user_id, offset=offset, limit=25)
     if not isinstance(conversations, list):
         return jsonify({"error": f"No conversations for {user_id} were found"}), 404
 
@@ -725,7 +791,7 @@ def delete_all_conversations():
 
     # get conversations for user
     try:
-        conversations = cosmos_conversation_client.get_conversations(user_id)
+        conversations = cosmos_conversation_client.get_conversations(user_id, offset=0, limit=None)
         if not conversations:
             return jsonify({"error": f"No conversations for {user_id} were found"}), 404
         
@@ -774,6 +840,13 @@ def ensure_cosmos():
 
     return jsonify({"message": "CosmosDB is configured and working"}), 200
 
+@app.route("/frontend_settings", methods=["GET"])  
+def get_frontend_settings():
+    try:
+        return jsonify(frontend_settings), 200
+    except Exception as e:
+        logging.exception("Exception in /frontend_settings")
+        return jsonify({"error": str(e)}), 500  
 
 def generate_title(conversation_messages):
     ## make sure the messages are sorted by _ts descending
